@@ -258,7 +258,7 @@ findCenterOfPitch <- function(data, pitch_type, pitcherMatchUp) {
     dataff$radius <- sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
     
     # Further filter data to pitches that land in our two-ball zone
-    datafin <- filter(dataff, radius < 0.286257)
+    datafin <- filter(dataff, radius < 0.858771)
     print(paste("Number of rows in datafin:", nrow(datafin)))
     
     # Calculations for lines
