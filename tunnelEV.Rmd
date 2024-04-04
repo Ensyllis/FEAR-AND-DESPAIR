@@ -1,0 +1,864 @@
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+load("~/bb2016.2021 (1).RData")
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(viridis)
+library(MASS)
+library(cluster)
+library(plotrix)
+library(graphics)
+library(kableExtra)
+library(ggforce)
+```
+
+```{r}
+add_legible_pitch <- function(df) {
+  # Checks if pitch_type exists in dataframe
+  #
+  if(!'pitch_type' %in% names(df)) {
+    stop("DataFrame does not have a 'pitch_type' column")
+  }
+
+  # Create pitch_type2 using case_match for the entire pitch_type column
+  pitch_type2 <- case_match(df$pitch_husband,  
+                            'FF' ~ 'Four.Seam',  
+                            c('FT', 'SI') ~ 'Two.Seam',  
+                            c('CH', 'FS') ~ 'ChangeUp.Splitter',  
+                            c('SL', 'FC') ~ 'Slider.Cutter',  
+                            'CU' ~ 'Curveball')
+
+  # Add pitch_type2 to the DataFrame
+  df$legible_pitch_type <- pitch_type2
+
+  # Return the modified DataFrame
+  return(df)
+}
+convert.plate_z.to.universal <- function(sz_top, sz_bot, plate_z)
+  #z.row is a row vector containing sz_top, sz_bot, and plate_z from StatCast data.  This function converts plate_z from recorded height to the height in a standardized strike zone.
+{
+  z3u = 44.08/12           #top of universal strike zone
+  z0u = 18.29/12           #bottom of universal strike zone
+
+  z.new = z0u + ((z3u - z0u) / (sz_top - sz_bot)) * (plate_z - sz_bot)
+  
+  #print(c(sz_top, sz_bot, plate_z, z.new))
+  return(z.new)
+}
+```
+
+```{r}
+data <- data %>% rowwise() %>% mutate(universal_plate_z = convert.plate_z.to.universal(sz_top, sz_bot, plate_z))
+data <- add_legible_pitch(data)
+```
+
+```{r}
+dat.wo <- data[sample(nrow(data), size = 9000, replace = FALSE), ]
+dat.wo
+```
+
+
+```{}
+computeCenterCoordinateAndAddVerticalShift <- function(dataframe) {
+  
+
+  # (.2795, 3.61) is the point given for the "perfect" fastball, this can change if needed
+  dataff$radius = sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
+
+  radius = sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
+  
+  radius = mean(radius, na.rm = TRUE)
+  
+  # Further filter data to pitches that land in our two-ball zone
+  datafin = filter(dataff, radius < 0.1431285)
+
+  # Calculations for lines
+  tval = (datafin$release_pos_y - 1.417) / -(datafin$y18 - datafin$release_pos_y)
+  xcords = ((datafin$x18 - datafin$release_pos_x) * tval) + datafin$release_pos_x
+  zcords = ((datafin$z18 - datafin$release_pos_z) * tval) + datafin$release_pos_z
+
+  # Calculate averages
+  xavg = mean(xcords, na.rm = TRUE)
+  zavg = mean(zcords, na.rm = TRUE)
+
+  # Append the averages as new columns
+  dataframe$xavg = xavg
+  dataframe$zavg = zavg
+  dataframe$radius = radius
+
+  # Add vertical shift
+  dataframe$zavg <- dataframe$zavg + (7 / 60) * (dataframe$release_speed - 80)
+
+  return(dataframe)
+}
+```
+
+FF: 93.3728
+(^^^ Fourseam-Fastball)
+TS: 92.4290
+(^^^Two-Seam & Sinker)
+SC: 85.6178
+(^^^ Slider Cutter)
+CS: 84.5143
+(^^^ Changeup Splitter)
+CU: 78.3268
+(^^^ Curveball)
+
+```{}
+testdf <- computeCenterCoordinateAndAddVerticalShift(dat.wo, "Four.Seam","R")
+```
+
+
+```{}
+
+
+findCenterOfPitch3 <- function(dataframe, x1, pthrow) {
+  
+      # Define the base speeds for each pitch type
+  base_speeds <- c(Four.Seam = 93.3728, Two.Seam = 92.4290, Slide.Cutter = 85.6178, ChangeUp.Splitter = 84.5143, Curveball = 78.3268)
+  
+  # Get the base speed for the given pitch type
+  base_speed <- base_speeds[x1]
+  # Filter data to just 4-seam fastballs between 94-96mph
+  
+  dataff = filter(dataframe, legible_pitch_type ==  x1 & release_speed > (base_speed - 1) & release_speed < (base_speed + 1) & p_throws == pthrow)
+
+  # (.2795, 3.61) is the point given for the "perfect" fastball, this can change if needed
+  dataff$radius = sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
+
+  radius = sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
+  
+  radius = mean(radius, na.rm = TRUE)
+  
+  # Further filter data to pitches that land in our two-ball zone
+  datafin = filter(dataff, radius < 0.1431285)
+
+  # Calculations for lines
+  tval = (datafin$release_pos_y - 1.417) / -(datafin$y18 - datafin$release_pos_y)
+  xcords = ((datafin$x18 - datafin$release_pos_x) * tval) + datafin$release_pos_x
+  zcords = ((datafin$z18 - datafin$release_pos_z) * tval) + datafin$release_pos_z
+
+  # Calculate averages
+  xavg = mean(xcords, na.rm = TRUE)
+  zavg = mean(zcords, na.rm = TRUE)
+
+  # Append the averages as new columns
+  dataframe$xavg = xavg
+  dataframe$zavg = zavg
+  dataframe$radius = radius
+
+  # Add vertical shift
+  dataframe$zavg <- dataframe$zavg + (7 / 60) * (dataframe$release_speed - 80)
+
+  return(dataframe)
+}
+```
+
+```{}
+
+testdf1 <- findCenterOfPitch3(dataff, "Two.Seam","R")
+```
+
+Center Calculation Functions
+
+```{}
+
+library(dplyr)
+
+findCenterOfPitch2 <- function(data, pitch_type, pitcherMatchUp) {
+  # Filter data to the specified pitch type and pitcher's throwing arm
+  data %>% 
+    filter(legible_pitch_type == pitch_type, p_throws == pitcherMatchUp) %>%
+    
+    # Calculate the radius from the 'perfect' pitch location (.2795, 3.61)
+    mutate(radius = sqrt((.2795 - plate_x)^2 + (3.61 - plate_z)^2)) %>%
+    
+    # Filter data to pitches that land within a specified radius
+    filter(radius < 0.1431285) %>%
+    
+    # Calculations for lines
+    mutate(tval = (release_pos_y - 1.417) / -(vy0 - release_pos_y),
+           xcords = ((vx0 - release_pos_x) * tval) + release_pos_x,
+           zcords = ((vz0 - release_pos_z) * tval) + release_pos_z) %>%
+    
+    # Calculate averages
+    summarise(xavg = mean(xcords, na.rm = TRUE),
+              zavg = mean(zcords, na.rm = TRUE),
+              release_speed_avg = mean(release_speed, na.rm = TRUE)) %>%
+    
+    # Add vertical shift based on average release speed
+    mutate(zavg_shifted = zavg + (7 / 60) * (release_speed_avg - 80)) %>%
+    
+    # Return the result
+    select(xavg, zavg, zavg_shifted)
+}
+```
+
+```{}
+findCenterOfPitch <- function(data, pitch_type, pitcherMatchUp)
+{
+  
+    # Define the base speeds for each pitch type
+    base_speeds <- c(Four.Seam = 93.3728, Two.Seam = 92.4290, Slide.Cutter = 85.6178, ChangeUp.Splitter= 84.5143, Curveball = 78.3268)
+        
+    # Get the base speed for the given pitch type
+    base_speed <- base_speeds[pitch_type]
+    # Filter data to just 4-seam fastballs between 94-96mph
+        
+    dataff = filter(data, legible_pitch_type == pitch_type & release_speed > (base_speed - 1) &          release_speed < (base_speed + 1) & p_throws == pitcherMatchUp)
+
+  
+    dataff$radius = sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
+    
+    ################################################################
+    
+    # Ipmportant. We may be unable to do batter individual tunnels 
+    # Because it's incredibly hard to throw a ball through said tunnel.
+    # Due to this we may need to increase the radius/tolernace level of the tunnel
+    
+    ################################################################
+    # Further filter data to pitches that land in our two-ball zone
+    datafin = filter(dataff, radius < 1)
+  
+    # Calculations for lines
+    tval = (datafin$release_pos_y - 1.417) / -(datafin$y18 - datafin$release_pos_y)
+    xcords = ((datafin$x18 - datafin$release_pos_x) * tval) + datafin$release_pos_x
+    zcords = ((datafin$z18 - datafin$release_pos_z) * tval) + datafin$release_pos_z
+    
+    mean_xcords = mean(xcords)
+    mean_zcords = mean(zcords, na.rm = TRUE)
+    # Calculate averages
+    data$xavg = mean_xcords
+    data$zavg = mean_zcords
+    
+    
+    # Add vertical shift
+    data$zavg <- data$zavg + (7 / 60) * (data$release_speed - 80)
+    
+    return(data)
+}
+```
+
+```{r}
+findCenterOfPitch <- function(data, pitch_type, pitcherMatchUp) {
+    # Define the base speeds for each pitch type
+    base_speeds <- c(FF = 93.3728, SI = 92.4290, SL = 85.6178, CH = 84.5143, CU = 78.3268)
+    
+    # Get the base speed for the given pitch type
+    base_speed <- base_speeds[pitch_type]
+    print(paste("Base speed for", pitch_type, "is", base_speed))
+    
+    # Filter data to just 4-seam fastballs between 94-96mph
+    dataff <- filter(data, pitch_husband == pitch_type & release_speed > (base_speed - 1) & release_speed < (base_speed + 1) & p_throws == pitcherMatchUp)
+    print(paste("Number of rows in dataff:", nrow(dataff)))
+    
+    dataff$radius <- sqrt(((.2795 - dataff$plate_x)^2) + ((3.61 - dataff$plate_z)^2))
+    
+    # Further filter data to pitches that land in our two-ball zone
+    datafin <- filter(dataff, radius < 0.286257)
+    print(paste("Number of rows in datafin:", nrow(datafin)))
+    
+    # Calculations for lines
+    tval <- (datafin$release_pos_y - 1.417) / -(datafin$y18 - datafin$release_pos_y)
+    xcords <- ((datafin$x18 - datafin$release_pos_x) * tval) + datafin$release_pos_x
+    zcords <- ((datafin$z18 - datafin$release_pos_z) * tval) + datafin$release_pos_z
+    
+    mean_xcords <- mean(xcords)
+    mean_zcords <- mean(zcords, na.rm = TRUE)
+    print(paste("Mean X-coordinate:", mean_xcords))
+    print(paste("Mean Z-coordinate:", mean_zcords))
+    
+    # Calculate averages
+    data$xavg <- mean_xcords
+    data$zavg <- mean_zcords
+    
+    # Add vertical shift
+    data$zavg <- data$zavg + (7 / 60) * (data$release_speed - 80)
+    
+    return(data)
+}
+
+```
+
+```{r}
+testdf4 <- findCenterOfPitch(dat.wo,"SI","L")
+```
+
+```{r}
+filterData <- function(data, pitch_type, pitcherMatchUp) {
+    # Define the base speeds for each pitch type
+    base_speeds <- c(FF = 93.3728, SI = 92.4290, SL = 85.6178, CH = 84.5143, CU = 78.3268)
+    
+    # Get the base speed for the given pitch type
+    base_speed <- base_speeds[pitch_type]
+    print(paste("Base speed for", pitch_type, "is", base_speed))
+    
+    # Filter data by release speed range
+    data_speed_range <- filter(data, release_speed > (base_speed - 1) & release_speed < (base_speed + 1))
+    print(paste("Number of rows after filtering by release speed range:", nrow(data_speed_range)))
+    
+    # Filter data by pitch type
+    data_pitch_type <- filter(data_speed_range, pitch_husband  == pitch_type)
+    print(paste("Number of rows after filtering by pitch type:", nrow(data_pitch_type)))
+    
+    # Filter data by pitcher hand
+    data_pitcher_hand <- filter(data_speed_range, p_throws == pitcherMatchUp)
+    print(paste("Number of rows after filtering by pitcher hand:", nrow(data_pitcher_hand)))
+    
+    return(data_pitcher_hand)
+}
+
+
+```
+
+```{r}
+testfilter_df <- filterData(dat.wo, "FF", "R")
+```
+
+Filter Functions:
+
+```{r}
+
+filter_in_tunneling <- function(data, threshold = 0.1431285) {
+  # Directly filter data based on the distance calculation
+  in_tunnel_data <- data %>%
+    filter(sqrt((plate_x - xavg)^2 + (universal_plate_z - zavg)^2) <= threshold)
+
+  return(in_tunnel_data)
+}
+filter_out_tunneling <- function(data, threshold = 0.1431285) {
+  # Directly filter data based on the distance calculation
+  in_tunnel_data <- data %>%
+    filter(sqrt((plate_x - xavg)^2 + (universal_plate_z - zavg)^2) > threshold)
+
+  return(in_tunnel_data)
+}
+```
+
+Caption Functions:
+
+```{r}
+total_hit_percentage <- function(data) 
+{
+  #Counts the number of hits, strieks and balls
+  s_count <- sum(data$type == 'S')
+  x_count <- sum(data$type == 'X')
+  b_count <- sum(data$type == 'B')
+
+  # Calculates the ratio of hits over strikes, balls and hits
+  ratio_of_X <- x_count / (s_count + x_count + b_count)
+
+ return(ratio_of_X)
+}
+
+### Hitting Statistics
+########################################
+tunneling_hitting_ratio <- function(data) {
+  # Count the number of rows where type is "X"
+  count_type_X <- sum(data$type == "X")
+
+  # Calculate ratio
+  ratio <- if (nrow(data) > 0) count_type_X / nrow(data) else NA
+  
+  return(ratio)
+}
+
+# Example usage
+# result <- tunneling_hitting_ratio(data)
+###Defining hitting statistic functions
+#######################################
+BA = function(data)
+{
+  Hit_set = data %>%
+    filter(hit == 1)
+ 
+  At_bat_set = data %>%
+    filter(events != "")
+ 
+  BA = nrow(Hit_set)/nrow(At_bat_set)
+  return(BA)
+}
+WHA = function(data)
+{
+  Hit_into_play_set = data %>%
+    filter(description == "hit_into_play")
+ 
+  WH_set = data %>%
+    filter(launch_speed >= 95)
+ 
+  WHA = nrow(WH_set)/nrow(Hit_into_play_set)
+  return(WHA)
+}
+SM = function(data)
+{
+  Swing_set = ifelse(data$description == "foul" | data$description == "hit_into_play"
+                       | data$description == "foul_bunt"| data$description == "bunt_foul_tip"|
+                         data$description == "fout_pitchout"| data$description == "missed_bunt"|
+                         data$description == "foul_tip" | data$description == "swinging_strike" |
+                         data$description == "swinging_strike_blocked" , 1, 0)
+  Miss_set = ifelse(data$description == "missed_bunt" | data$description == "swinging_strike" |
+                        data$description == "swinging_strike_blocked", 1, 0)
+   
+  SM = sum(Miss_set)/sum(Swing_set)
+  return(SM)
+}
+HR = function(data)
+{
+  At_bat_set = data %>%
+    filter(events != "")
+ 
+  HR_set = data %>%
+    filter(events == "home_run")
+ 
+  HR = nrow(HR_set)/nrow(At_bat_set)
+  return(HR)
+}
+GB = function(data)
+{
+   Hit_into_play_set = data %>%
+     filter(description == "hit_into_play")
+   
+  GB_set = data %>%
+    filter(bb_type == "ground_ball")
+ 
+  GB = nrow(GB_set)/nrow(Hit_into_play_set)
+  return(GB)
+}
+```
+
+Generating Stats
+
+```{r}
+# Create an empty DataFrame with numeric columns
+stats_df <- data.frame(
+  pitchType = character(0),
+  total_hit_percentage = numeric(0),
+  inTun_tunnel_hit_percentage = numeric(0),
+  inTun_batting_average = numeric(0),
+  inTun_WellHittingAverage = numeric(0),
+  inTun_SwingMissPercentage = numeric(0),
+  inTun_HomeRunPercentage = numeric(0),
+  inTun_GroundBallPercentage = numeric(0),
+  outTun_tunnel_hit_percentage = numeric(0),
+  outTun_batting_average = numeric(0),
+  outTun_WellHittingAverage = numeric(0),
+  outTun_SwingMissPercentage = numeric(0),
+  outTun_HomeRunPercentage = numeric(0),
+  outTun_GroundBallPercentage = numeric(0)
+)
+```
+
+```{r}
+generate_tunnel_statistics <- function(data, pitch) {
+  # Helper function to handle NA values in rounding
+  roundNA <- function(x, digits) {
+    if (is.na(x)) {
+      return("NA")
+    } else {
+      return(round(x, digits))
+    }
+  }
+
+  # Calculate Total Hit Percentage
+  total_hit_percentage <- tunneling_hitting_ratio(data)
+
+  # In-tunnel calculations
+  in_tun_data <- filter_in_tunneling(data)
+  in_tun_tunnel_hit_percentage <- tunneling_hitting_ratio(in_tun_data)
+  in_tun_batting_average <- BA(in_tun_data)
+  in_tun_WellHittingAverage <- WHA(in_tun_data)
+  in_tun_SwingMissPercentage <- SM(in_tun_data)
+  in_tun_HomeRunPercentage <- HR(in_tun_data)
+  in_tun_GroundBallPercentage <- GB(in_tun_data)
+  # Out-tunnel calculations
+  out_tun_data <- filter_out_tunneling(data)
+  out_tun_tunnel_hit_percentage <- tunneling_hitting_ratio(out_tun_data)
+  out_tun_batting_average <- BA(out_tun_data)
+  out_tun_WellHittingAverage <- WHA(out_tun_data)
+  out_tun_SwingMissPercentage <- SM(out_tun_data)
+  out_tun_HomeRunPercentage <- HR(out_tun_data)
+  out_tun_GroundBallPercentage <- GB(out_tun_data)
+  
+  
+  new_row <- data.frame(
+    pitchType = pitch,
+    total_hit_percentage = total_hit_percentage,
+    inTun_tunnel_hit_percentage = in_tun_tunnel_hit_percentage,
+    inTun_batting_average = in_tun_batting_average,
+    inTun_WellHittingAverage = in_tun_WellHittingAverage,
+    inTun_SwingMissPercentage = in_tun_SwingMissPercentage,
+    inTun_HomeRunPercentage = in_tun_HomeRunPercentage,
+    inTun_GroundBallPercentage = in_tun_HomeRunPercentage,
+    outTun_tunnel_hit_percentage = out_tun_tunnel_hit_percentage,
+    outTun_batting_average = out_tun_batting_average,
+    outTun_WellHittingAverage = out_tun_WellHittingAverage,
+    outTun_SwingMissPercentage = out_tun_SwingMissPercentage,
+    outTun_HomeRunPercentage = out_tun_HomeRunPercentage,
+    outTun_GroundBallPercentage = out_tun_GroundBallPercentage
+  )
+  
+  stats_df <<- rbind(stats_df, new_row)
+
+  # Construct captions for in-tunnel statistics
+  in_tun_caption <- paste(
+    "In-Tunnel Hit%:", roundNA(in_tun_tunnel_hit_percentage * 100, 2),
+    "% | In-Tunnel Batting Average:", roundNA(in_tun_batting_average * 100, 2),
+    "% | In-Tunnel Well-Hitting Average:", roundNA(in_tun_WellHittingAverage * 100, 2), "%"
+  )
+  
+  in_tun_caption2 <- paste(
+    "In-Tunnel Swing/Miss%:", roundNA(in_tun_SwingMissPercentage * 100, 2),
+    "% | In-Tunnel Home Run%:", roundNA(in_tun_HomeRunPercentage * 100, 2),
+    "% | In-Tunnel Ground Ball%:", roundNA(in_tun_GroundBallPercentage * 100, 2), "%"
+  )
+
+  # Construct captions for out-tunnel statistics
+  out_tun_caption <- paste(
+    "Out-Tunnel Hit%:", roundNA(out_tun_tunnel_hit_percentage * 100, 2),
+    "% | Out-Tunnel Batting Average:", roundNA(out_tun_batting_average * 100, 2),
+    "% | Out-Tunnel Well-Hitting Average:", roundNA(out_tun_WellHittingAverage * 100, 2), "%"
+  )
+  
+  out_tun_caption_2 <- paste(
+        "Out-Tunnel Swing/Miss%:", roundNA(out_tun_SwingMissPercentage * 100, 2),
+    "% | Out-Tunnel Home Run%:", roundNA(out_tun_HomeRunPercentage * 100, 2),
+    "% | Out-Tunnel Ground Ball%:", roundNA(out_tun_GroundBallPercentage * 100, 2), "%"
+  )
+
+  # Combine the total, in-tunnel, and out-tunnel captions
+  total_caption <- paste(
+    "Total Hit%:", roundNA(total_hit_percentage * 100, 2), "%"
+  )
+
+  returned_caption <- paste(total_caption, in_tun_caption, in_tun_caption2, out_tun_caption, out_tun_caption_2, sep="\n\n")
+
+  return(returned_caption)
+}
+```
+
+```{r}
+
+plot5 = function(data_sample, data_total, pitch=NULL, year=NULL, stand=NULL, p_throw=NULL, inside_strike_zone=NULL, title=NULL, caption="") {
+    
+
+    if (!is.null(year)) {
+      data_sample <- dplyr::filter(data_sample, game_year == year)
+    }
+    if (!is.null(stand)) {
+      data_sample <- dplyr::filter(data_sample, stand == stand)
+    }
+    if (!is.null(p_throw)) {
+      data_sample <- dplyr::filter(data_sample, p_throw == p_throw)
+    }
+
+  
+    if (!is.null(year)) {
+      data_total <- dplyr::filter(data_total, game_year == year)
+    }
+    if (!is.null(stand)) {
+      data_total <- dplyr::filter(data_total, stand == stand)
+    }
+    if (!is.null(p_throw)) {
+      data_total <- dplyr::filter(data_total, p_throw == p_throw)
+    }
+  
+    data_total = findCenterOfPitch(data_total, pitch, p_throw)
+    data_sample = findCenterOfPitch(data_sample, pitch, p_throw)
+    
+        # Filter data based on input parameters
+    if (!is.null(pitch)) {
+      data_total <- dplyr::filter(data_total, legible_pitch_type == pitch)
+    }
+        # Filter data based on input parameters
+    if (!is.null(pitch)) {
+      data_sample <- dplyr::filter(data_sample, legible_pitch_type == pitch)
+    }
+  
+
+      
+      
+    # Call findXYColor to get mx, my, and color
+    color_info <- findXYColor(p_throw, stand, pitch)
+    mx <- mean(data_total$xavg, na.rm = TRUE)
+    my <- mean(data_total$zavg, na.rm = TRUE)
+    type_color <- color_info$colour
+
+     plot <- ggplot(data_sample) +
+      geom_point(aes(plate_x, universal_plate_z, color = type), shape = 21, alpha=0.5) +
+      scale_color_manual(values = c("S" = "red", "B" = "yellow", "X" = "green")) +
+      #geom_circle(aes(x0 = mx, y0 = my, r = .125), color = type_color) +
+      #geom_circle(aes(x0 = mx, y0 = my, r = .375), color = type_color) +
+      #geom_circle(aes(x0 = mx, y0 = my, r = .625), color = type_color) +
+      geom_rect(aes(xmin = -0.8391667, xmax = 0.8391667, ymin = 1.52416667, ymax = 3.67333333),
+                fill = NA, color = 'black', alpha = 0.5) +
+      coord_fixed(ratio = 1) +
+      xlim(-2, 2) + ylim(0, 5) +
+      scale_fill_manual(values = c("Four.Seam" = "grey", "Two.Seam" = "lightblue", "Slider.Cutter" = "blue", "Curveball" = "darkblue", "ChangeUp.Splitter" = "orange"))
+
+     
+     #Where you get Title and Caption
+     #We require passing the x_center and y_center so that
+     #We can get the tunneling statistics 
+     #Ie. In tunnel and outside of tunnel
+    label <- paste(pitch, p_throw, stand)
+     #In Tunnel Statistics
+    final_caption <- generate_tunnel_statistics(data_total, label)
+
+    # Add caption and title if not null
+    if (!is.null(caption) && caption != "") {
+      plot <- plot + labs(caption = final_caption)
+    }
+    if (!is.null(title)) {
+      plot <- plot +
+        ggtitle(title) +
+        xlab('Plate X') +
+        ylab('Plate Z') +
+        labs(caption = final_caption) +
+        theme(
+          plot.title = element_text(hjust = 0.5, family="gentium"),   # Center the title
+          plot.caption = element_text(hjust = 0.5)
+          # Center the caption
+        )
+    }
+  return(plot)
+}
+```
+
+
+```{r}
+
+
+library(ggplot2) # Assuming ggplot2 or similar for plotting
+
+# Define the function
+generate_plots <- function(df, data_total) {
+  # Define the combinations of parameters
+#  years <- c("2021")
+  stands <- c(
+              "R"
+#             "L"
+              )
+  p_throws <- c(
+                "R"
+#                "L"
+                )
+  pitch_type2 <- c(
+                  "Four.Seam",
+                   "Two.Seam",
+                   "ChangeUp.Splitter",
+                   "Slider.Cutter",
+                   "Curveball"
+                  )
+  #  inside_strike <- c(TRUE, FALSE)
+
+  # Loop through each combination and generate the plot
+#  for (year in years) {
+#    print(year)
+    for (stand in stands) {
+      print(stand)
+      for (p_throw in p_throws) {
+        print(p_throw)
+        for (pitch in pitch_type2) {
+          print(pitch)
+#          for (inside in inside_strike){
+            title <- paste(pitch, ",", "Batter", 
+                           stand, ", Pitcher", 
+                           p_throw, ",", 
+#                           year, ",", 
+                           nrow(df), 
+                           "Samples", ",")
+            plot <- plot5(
+              df, 
+              data_total, 
+              pitch = pitch, 
+#              year = year, 
+              stand = stand, 
+              p_throw = p_throw, 
+#              inside = inside,
+              title = title)
+            print(plot)
+#           }
+#        }
+      }
+    }
+  }
+}
+```
+
+
+```{r}
+generate_plots(dat.wo, data)
+```
+
+```{r}
+      set_pitch_based_on_p_stand <- function(data, pitcher) {
+
+        filtered_data <- dplyr::filter(data, pitcher == pitcher)
+
+        
+        count_r <- sum(filtered_data$p_throws == "R", na.rm = TRUE)
+        count_l <- sum(filtered_data$p_throws == "L", na.rm = TRUE)
+        
+
+        if (count_r > count_l) {
+          pitch <- "R"
+        } else if (count_l > count_r) {
+          pitch <- "L"
+        } else {
+          
+          pitch <- "Tie" 
+        }
+      
+        return(pitch)
+      }
+
+```
+
+```{r}
+
+plot6 = function(data_sample, data_total, pitch=NULL, year=NULL, stand=NULL, inside_strike_zone=NULL, title=NULL, caption="") {
+    
+
+    print("recieved function")
+    if (!is.null(year)) {
+      data_sample <- dplyr::filter(data_sample, game_year == year)
+    }
+    if (!is.null(stand)) {
+      data_sample <- dplyr::filter(data_sample, stand == stand)
+    }
+
+        translate_pitch <- function(pitch_type) {
+                  translation <- switch(pitch_type,
+                                        'Four.Seam' = 'FF',
+                                        'Two.Seam' = 'SI',
+                                        'ChangeUp.Splitter' = 'CH',
+                                        'Slider.Cutter' = 'SL',
+                                        'Curveball' = 'CU',
+                                        pitch_type)  # If no match, return the original pitch_type
+                  return(translation)
+                }
+
+        result <- translate_pitch(pitch)
+  
+  
+    if (!is.null(year)) {
+      data_total <- dplyr::filter(data_total, game_year == year)
+    }
+    if (!is.null(stand)) {
+      data_total <- dplyr::filter(data_total, stand == stand)
+    }
+    
+        # Filter data based on input parameters
+    if (!is.null(pitch)) {
+      data_total <- dplyr::filter(data_total, pitch_husband == pitch)
+    }
+        # Filter data based on input parameters
+    if (!is.null(pitch)) {
+      data_sample <- dplyr::filter(data_sample, pitch_husband == pitch)
+    }
+  
+    print("Finished Filtering")
+    
+   listOfPitchers <- c(621244, 668678, 518876, 663993, 612434, 668678, 605397, 477132, 607536)
+   player_numbers <- c(Eduardo_Rodriguez = "621244", 
+                    Zac_Gallen = "668678", 
+                    Merrill_Kelly = "518876", 
+                    Paul_Sewald = "663993", 
+                    Miguel_Castro = "612434", 
+                    Blake_Snell = "668678", 
+                    Joe_Musgrave = "605397", 
+                    Clayton_Kershaw = "477132", 
+                    Kyle_Freeland = "607536")
+
+      # Iterate through each pitcher in the list
+      for (pitcher in listOfPitchers) {
+      
+        # Get the player name
+        player_name <- names(player_numbers[player_numbers == pitcher])
+      
+        print(player_name)
+        # Filter data for the current pitcher
+        data_total <- dplyr::filter(data_total, pitcher == pitcher)
+        
+        p_throw = set_pitch_based_on_p_stand(data_total, pitcher)
+        print(p_throw)
+        
+
+      
+        # Call the findCenterOfPitch function (assuming it's defined elsewhere)
+        data_total <- findCenterOfPitch(data_total, result, p_throw, "Arbitrary Parameter")  # Assuming 'pitch' and 'p_throw' are defined
+      
+        # Construct the label for the data
+        label <- paste(player_name, pitch, p_throw, stand)  # Assuming 'stand' is defined
+        print(label)
+      
+        # Generate tunnel statistics
+        final_caption <- generate_tunnel_statistics(data_total, label)
+      
+        # Output or store the final caption
+        print(final_caption)
+      }
+
+}
+```
+
+
+```{r}
+
+library(ggplot2) # Assuming ggplot2 or similar for plotting
+
+# Define the function
+generate_plots1 <- function(df, data_total) {
+  # Define the combinations of parameters
+#  years <- c("2021")
+  stands <- c(
+              "R"
+#             "L"
+              )
+  pitch_type2 <- c(
+                  "Four.Seam",
+                   "Two.Seam",
+                   "ChangeUp.Splitter",
+                   "Slider.Cutter",
+                   "Curveball"
+                  )
+  #  inside_strike <- c(TRUE, FALSE)
+
+  # Loop through each combination and generate the plot
+#  for (year in years) {
+#    print(year)
+    for (stand in stands) {
+      print(stand)
+        for (pitch in pitch_type2) {
+          print(pitch)
+#          for (inside in inside_strike){
+            title <- paste(pitch, ",", "Batter", 
+                           stand, ", Pitcher", 
+#                           year, ",", 
+                           nrow(df), 
+                           "Samples", ",")
+            
+            print("test1")
+            plot <- plot6(
+              df, 
+              data_total, 
+              pitch = pitch, 
+#              year = year, 
+              stand = stand,  
+#              inside = inside,
+              title = title)
+            print(plot)
+#           }
+#        }
+      }
+    }
+}
+```
+
+
+```{r}
+generate_plots1(dat.wo, data)
+```
