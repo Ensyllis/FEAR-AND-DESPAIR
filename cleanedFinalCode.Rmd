@@ -1,0 +1,181 @@
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+load("~/bb2016.2021 (1).RData")
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(viridis)
+library(MASS)
+library(cluster)
+library(plotrix)
+library(graphics)
+library(kableExtra)
+library(ggforce)
+```
+
+
+```{r}
+add_legible_pitch <- function(df) {
+  # Checks if pitch_type exists in dataframe
+  #
+  if(!'pitch_type' %in% names(df)) {
+    stop("DataFrame does not have a 'pitch_type' column")
+  }
+
+  # Create pitch_type2 using case_match for the entire pitch_type column
+  pitch_type2 <- case_match(df$pitch_husband,  
+                            'FF' ~ 'Four.Seam',  
+                            c('FT', 'SI') ~ 'Two.Seam',  
+                            c('CH', 'FS') ~ 'ChangeUp.Splitter',  
+                            c('SL', 'FC') ~ 'Slider.Cutter',  
+                            'CU' ~ 'Curveball')
+
+  # Add pitch_type2 to the DataFrame
+  df$legible_pitch_type <- pitch_type2
+
+  # Return the modified DataFrame
+  return(df)
+}
+convert.plate_z.to.universal <- function(sz_top, sz_bot, plate_z)
+  #z.row is a row vector containing sz_top, sz_bot, and plate_z from StatCast data.  This function converts plate_z from recorded height to the height in a standardized strike zone.
+{
+  z3u = 44.08/12           #top of universal strike zone
+  z0u = 18.29/12           #bottom of universal strike zone
+
+  z.new = z0u + ((z3u - z0u) / (sz_top - sz_bot)) * (plate_z - sz_bot)
+  
+  #print(c(sz_top, sz_bot, plate_z, z.new))
+  return(z.new)
+}
+```
+
+```{r}
+data <- data %>% rowwise() %>% mutate(universal_plate_z = convert.plate_z.to.universal(sz_top, sz_bot, plate_z))
+data <- add_legible_pitch(data)
+```
+
+```{r}
+dat.wo <- data[sample(nrow(data), size = 9000, replace = FALSE), ]
+dat.wo
+```
+
+```{r}
+findCenterOfPitch <- function(data, pitch_type, pitcherHandedness, batterHandedness) {
+    # Define the base speeds for each pitch type
+    base_speeds <- c(FF = 93.3728, SI = 92.4290, SL = 85.6178, CH = 84.5143, CU = 78.3268)
+    
+    # Get the base speed for the given pitch type
+    base_speed <- base_speeds[pitch_type]
+    print(paste("Base speed for", pitch_type, "is", base_speed))
+    
+    # Filter data to just 4-seam fastballs between 94-96mph
+    dataff <- filter(data, pitch_husband == pitch_type & release_speed > (base_speed - 1) & release_speed < (base_speed + 1) & p_throws == pitcherHandedness)
+    print(paste("Number of rows in dataff:", nrow(dataff)))
+    
+    # Adjust h and k based on pitcherHandedness and batterHandedness
+    h <- ifelse(pitcherHandedness == "L" & batterHandedness == "R", -0.2795,
+                ifelse(pitcherHandedness == "R" & batterHandedness == "R", 0.2795, 0))
+    
+    k <- 3.61
+    
+    dataff$radius <- sqrt(((h - dataff$plate_x)^2) + ((k - dataff$plate_z)^2))
+    
+    # Further filter data to pitches that land in our two-ball zone
+    datafin <- filter(dataff, radius < 0.858771)
+    print(paste("Number of rows in datafin:", nrow(datafin)))
+    
+    # Calculations for lines
+    tval <- (datafin$release_pos_y - 1.417) / -(datafin$y18 - datafin$release_pos_y)
+    xcords <- ((datafin$x18 - datafin$release_pos_x) * tval) + datafin$release_pos_x
+    zcords <- ((datafin$z18 - datafin$release_pos_z) * tval) + datafin$release_pos_z
+    
+    mean_xcords <- mean(xcords)
+    mean_zcords <- mean(zcords, na.rm = TRUE)
+    print(paste("Mean X-coordinate:", mean_xcords))
+    print(paste("Mean Z-coordinate:", mean_zcords))
+    
+    # Calculate averages
+    data$xavg <- mean_xcords
+    data$zavg <- mean_zcords
+    
+    # Add vertical shift
+    data$zavg <- data$zavg + (7 / 60) * (data$release_speed - 80)
+    
+    return(data)
+}
+```
+
+
+```{r}
+# Define the function
+generate_plots3 <- function(data_total) {
+  # Define the combinations of parameters
+
+  ############################################################
+        # Add all the pitchers
+  ############################################################
+  pitchers <- c(621244, 668678, 518876, 663993, 612434, 668678, 605397, 477132, 607536)
+  stands <- c("R")
+  pitch_type2 <- c("Four.Seam", "Two.Seam", "ChangeUp.Splitter", "Slider.Cutter", "Curveball")
+  
+  for (pitcher in pitchers) {
+    print(pitcher)
+    for (stand in stands) {
+      print(stand)
+      for (pitch_type in pitch_type2) {
+        print(pitch_type)
+        # Copy the original dataframe at the start of each loop iteration
+        data_filtered <- data_total
+        
+        # Code that finds if the pitcher is left or right handed
+        pitcherHand = set_pitch_based_on_p_stand(data_filtered, pitcher)
+        if (!is.null(pitcher)) {
+          data_filtered <- dplyr::filter(data_filtered, pitcher == pitcher)
+        }
+        if (!is.null(stand)) {
+          data_filtered <- dplyr::filter(data_filtered, stand == stand)
+        }
+        
+        if (!is.null(pitcherHand)) {
+          data_filtered <- dplyr::filter(data_filtered, p_throws == pitcherHand)
+        }
+        
+        translate_pitch <- function(pitch_type) {
+          translation <- switch(pitch_type,
+                                'Four.Seam' = 'FF',
+                                'Two.Seam' = 'SI',
+                                'ChangeUp.Splitter' = 'CH',
+                                'Slider.Cutter' = 'SL',
+                                'Curveball' = 'CU',
+                                pitch_type)  # If no match, return the original pitch_type
+          return(translation)
+        }
+        pitchtype <- translate_pitch(pitch_type)
+        
+        if (!is.null(pitchtype)) {
+          data_filtered <- dplyr::filter(data_filtered, pitch_husband == pitchtype)
+        }
+        
+        dataframe = findCenterOfPitch(data_filtered, pitchtype, stand, pitcherHand)
+
+        ############################################################
+            # Add Generate Stats
+        ############################################################
+        
+        ############################################################
+            # Add Dataframe Stats
+        ############################################################
+        
+      }
+    }
+  }
+}
+
+```
+
+```{r}
+generate_plots3(data)
+```
